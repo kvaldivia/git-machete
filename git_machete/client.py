@@ -1641,7 +1641,7 @@ class MacheteClient:
         domain = self.__derive_code_hosting_domain(spec)
         org_repo_remote = self.__derive_org_repo_and_remote(spec, domain=domain)
         code_hosting_client = spec.create_client(
-            domain=domain, organization=org_repo_remote.organization, repository=org_repo_remote.repository)
+            domain=domain, organization=org_repo_remote.organization, repository=org_repo_remote.repository, token_alias=org_repo_remote.token_alias)
         print(f'Checking for open {spec.display_name} {spec.pr_short_name}s... ', end='', flush=True)
         current_user: Optional[str] = code_hosting_client.get_current_user_login()
         debug(f'Current {spec.display_name} user is ' + (bold(current_user or '<none>')))
@@ -2110,7 +2110,7 @@ class MacheteClient:
         domain = self.__derive_code_hosting_domain(spec)
         org_repo_remote = self.__derive_org_repo_and_remote(spec, domain=domain)
         code_hosting_client = spec.create_client(domain=domain, organization=org_repo_remote.organization,
-                                                 repository=org_repo_remote.repository)
+                                                 repository=org_repo_remote.repository, token_alias=org_repo_remote.token_alias)
 
         current_user: Optional[str] = code_hosting_client.get_current_user_login()
         if not current_user and mine:
@@ -2276,7 +2276,7 @@ class MacheteClient:
         head = self.__git.get_current_branch()
         org_repo_remote = self.__derive_org_repo_and_remote(spec, domain=domain, branch_used_for_tracking_data=head)
         code_hosting_client = spec.create_client(
-            domain=domain, organization=org_repo_remote.organization, repository=org_repo_remote.repository)
+            domain=domain, organization=org_repo_remote.organization, repository=org_repo_remote.repository, token_alias=org_repo_remote.token_alias)
 
         prs: List[PullRequest] = code_hosting_client.get_open_pull_requests_by_head(head)
         if not prs:
@@ -2384,7 +2384,7 @@ class MacheteClient:
         domain = self.__derive_code_hosting_domain(spec)
         org_repo_remote = self.__derive_org_repo_and_remote(spec, domain=domain, branch_used_for_tracking_data=head)
         code_hosting_client = spec.create_client(
-            domain=domain, organization=org_repo_remote.organization, repository=org_repo_remote.repository)
+            domain=domain, organization=org_repo_remote.organization, repository=org_repo_remote.repository, token_alias=org_repo_remote.token_alias)
 
         debug(f'organization is {org_repo_remote.organization}, repository is {org_repo_remote.repository}')
 
@@ -2441,10 +2441,12 @@ class MacheteClient:
         remote_config_key = spec.git_config_keys.remote
         organization_config_key = spec.git_config_keys.organization
         repository_config_key = spec.git_config_keys.repository
+        token_alias_config_key = spec.git_config_keys.token_alias
 
         remote_from_config = self.__git.get_config_attr_or_none(key=remote_config_key)
         org_from_config = self.__git.get_config_attr_or_none(key=organization_config_key)
         repo_from_config = self.__git.get_config_attr_or_none(key=repository_config_key)
+        token_alias_from_config = self.__git.get_config_attr_or_none(key=token_alias_config_key)
 
         url_for_remote: Dict[str, str] = self.__get_url_for_remote()
         if not url_for_remote:
@@ -2464,22 +2466,22 @@ class MacheteClient:
                                        'but such remote does not exist')
 
         if remote_from_config and org_from_config and repo_from_config:
-            return OrganizationAndRepositoryAndRemote(org_from_config, repo_from_config, remote_from_config)
+            return OrganizationAndRepositoryAndRemote(org_from_config, repo_from_config, remote_from_config, token_alias_from_config)
 
         if remote_from_config:
             url = url_for_remote[remote_from_config]
-            org_and_repo = OrganizationAndRepository.from_url(domain, url)
+            org_and_repo = OrganizationAndRepository.from_url(domain, url, token_alias_from_config)
             if not org_and_repo:
                 raise MacheteException(f'`{remote_config_key}` git config key points to `{remote_from_config}` remote, '
                                        f'but its URL `{url}` does not correspond to a valid {spec.display_name} {spec.repository_name}')
-            return OrganizationAndRepositoryAndRemote(org_and_repo.organization, org_and_repo.repository, remote_from_config)
+            return OrganizationAndRepositoryAndRemote(org_and_repo.organization, org_and_repo.repository, remote_from_config, token_alias_from_config)
 
         if org_from_config and repo_from_config:
             for remote, url in self.__get_url_for_remote().items():
                 if is_matching_remote_url(domain, url) and \
-                        OrganizationAndRepository.from_url(domain, url) == \
-                        OrganizationAndRepository(org_from_config, repo_from_config):
-                    return OrganizationAndRepositoryAndRemote(org_from_config, repo_from_config, remote)
+                        OrganizationAndRepository.from_url(domain, url, token_alias_from_config) == \
+                        OrganizationAndRepository(org_from_config, repo_from_config, token_alias_from_config):
+                    return OrganizationAndRepositoryAndRemote(org_from_config, repo_from_config, remote, token_alias_from_config)
             raise MacheteException(
                 f'Both `{organization_config_key}` and `{repository_config_key}` git config keys are defined, '
                 f'but no remote seems to correspond to `{org_from_config}/{repo_from_config}` '
@@ -2487,8 +2489,8 @@ class MacheteClient:
                 f'Consider pointing to the remote via `{remote_config_key}` config key')
 
         remote_and_organization_and_repository_from_urls: Dict[str, OrganizationAndRepositoryAndRemote] = {
-            remote: OrganizationAndRepositoryAndRemote(oar.organization, oar.repository, remote) for remote, oar in (
-                (remote, OrganizationAndRepository.from_url(domain, url)) for remote, url in url_for_remote.items()
+            remote: OrganizationAndRepositoryAndRemote(oar.organization, oar.repository, remote, token_alias_from_config) for remote, oar in (
+                (remote, OrganizationAndRepository.from_url(domain, url, token_alias_from_config)) for remote, url in url_for_remote.items()
             ) if oar
         }
 
@@ -2575,7 +2577,7 @@ class MacheteClient:
         domain = self.__derive_code_hosting_domain(spec)
         org_repo_remote = self.__derive_org_repo_and_remote(spec, domain=domain, branch_used_for_tracking_data=head)
         code_hosting_client = spec.create_client(domain=domain, organization=org_repo_remote.organization,
-                                                 repository=org_repo_remote.repository)
+                                                 repository=org_repo_remote.repository, token_alias=org_repo_remote.token_alias)
 
         remote_branch = RemoteBranchShortName(f"{org_repo_remote.remote}/{base}")
         remote_base_branch_exists_locally = remote_branch in self.__git.get_remote_branches()

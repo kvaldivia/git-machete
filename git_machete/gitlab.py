@@ -33,7 +33,8 @@ class GitLabToken(NamedTuple):
 
     @classmethod
     def __get_token_from_env(cls) -> Optional["GitLabToken"]:
-        debug(f"1. Trying to find token in `{GITLAB_TOKEN_ENV_VAR}` environment variable...")
+        debug(f"1. Trying to find token in `{
+              GITLAB_TOKEN_ENV_VAR}` environment variable...")
         gitlab_token = os.environ.get(GITLAB_TOKEN_ENV_VAR)
         if gitlab_token:
             return cls(value=gitlab_token,
@@ -73,7 +74,8 @@ class GitLabToken(NamedTuple):
             return None
 
         glab_token_returncode, _, glab_token_stderr = \
-            popen_cmd(glab, "auth", "status", "--hostname", domain, "--show-token", hide_debug_output=True)
+            popen_cmd(glab, "auth", "status", "--hostname", domain,
+                      "--show-token", hide_debug_output=True)
         if glab_token_returncode != 0:
             return None
 
@@ -115,7 +117,8 @@ class GitLabClient(CodeHostingClient):
             # Actual MR template resolution for GitLab has a complex hierarchy of templates, including
             # project-level, group-level and instance-level templates - and also the ability to "choose" a template.
             # To keep things simple, we'll only support the "Default.md" template for now.
-            pr_description_path=['.gitlab', 'merge_request_templates', 'Default.md'],
+            pr_description_path=['.gitlab',
+                                 'merge_request_templates', 'Default.md'],
             pr_full_name='merge request',
             pr_ordinal_char='!',
             pr_short_name='MR',
@@ -132,6 +135,7 @@ class GitLabClient(CodeHostingClient):
                 remote='machete.gitlab.remote',
                 annotate_with_urls='machete.gitlab.annotateWithUrls',
                 force_description_from_commit_message='machete.gitlab.forceDescriptionFromCommitMessage',
+                token_alias='machete.gitlab.token-alias'
             )
         )
 
@@ -156,60 +160,74 @@ class GitLabClient(CodeHostingClient):
 
         url_prefix = 'https://' + self.domain + '/api/v4'
         url = url_prefix + path
-        json_body: Optional[str] = json.dumps(request_body) if request_body else None
-        http_request = urllib.request.Request(url, headers=headers, data=json_body.encode() if json_body else None, method=method.upper())
+        json_body: Optional[str] = json.dumps(
+            request_body) if request_body else None
+        http_request = urllib.request.Request(url, headers=headers, data=json_body.encode(
+        ) if json_body else None, method=method.upper())
         debug(f'firing a {method} request to {url} with {"a" if self.__token else "no"} '
               f'bearer token and request body {compact_dict(request_body) if request_body else "<none>"}')
 
         try:
             with urllib.request.urlopen(http_request) as response:
-                parsed_response_body: Any = json.loads(response.read().decode())
+                parsed_response_body: Any = json.loads(
+                    response.read().decode())
                 # https://docs.gitlab.com/ee/api/rest/#pagination-link-header
                 link_header: str = response.info()["link"]
                 if link_header:
                     url_prefix_regex = re.escape(url_prefix)
-                    match = re.search(f'<{url_prefix_regex}(/[^>]+)>; rel="next"', link_header)
+                    match = re.search(
+                        f'<{url_prefix_regex}(/[^>]+)>; rel="next"', link_header)
                     if match:
                         next_page_path = match.group(1)
-                        debug(f'link header is present in the response, and there is more data to retrieve under {next_page_path}')
+                        debug(f'link header is present in the response, and there is more data to retrieve under {
+                              next_page_path}')
                         return parsed_response_body + self.__fire_gitlab_api_request(method, next_page_path, request_body)
                     else:
-                        debug('link header is present in the response, but there is no more data to retrieve')
+                        debug(
+                            'link header is present in the response, but there is no more data to retrieve')
                 return parsed_response_body
         except urllib.error.HTTPError as err:
             if err.code == http.HTTPStatus.CONFLICT:
                 error_response = json.loads(err.read().decode())
-                error_reason: str = self.__extract_failure_info_from_409(error_response)
+                error_reason: str = self.__extract_failure_info_from_409(
+                    error_response)
                 if 'Another open merge request already exists for this source branch:' in error_reason:
                     raise MacheteException(error_reason)
                 else:
                     raise UnexpectedMacheteException(
                         f'GitLab API returned 409 (Conflict) HTTP status with error message: `{error_reason}`.')
             elif err.code in (http.HTTPStatus.UNAUTHORIZED, http.HTTPStatus.FORBIDDEN):
-                first_line = f'GitLab API returned `{err.code}` HTTP status with error message: `{err.reason}`\n'
+                first_line = f'GitLab API returned `{
+                    err.code}` HTTP status with error message: `{err.reason}`\n'
                 last_line = 'You can also use a different token provider - see `git machete help gitlab` for details.'
                 if self.__token:
                     raise MacheteException(
-                        first_line + f'Make sure that the GitLab API token provided by {self.__token.provider} '
+                        first_line +
+                        f'Make sure that the GitLab API token provided by {
+                            self.__token.provider} '
                         f'is valid and allows for access to `{method.upper()}` `{url_prefix}{path}`.\n' + last_line)
                 else:
                     raise MacheteException(
                         first_line + 'You might not have the required permissions for this project.\n'
                                      'Provide a GitLab API token with `api` access.\n'
-                                     f'Visit `https://{self.domain}/-/user_settings/personal_access_tokens` '
+                                     f'Visit `https://{
+                                         self.domain}/-/user_settings/personal_access_tokens` '
                                      'to generate a new one.\n' + last_line)
             elif err.code == http.HTTPStatus.NOT_FOUND:
                 # TODO (#164): make a dedicated exception here
                 raise MacheteException(
-                    f'`{method} {url}` request ended up in 404 response from GitLab. A valid GitLab API token is required.\n'
-                    f'Provide a GitLab API token with `api` access via one of the: {self._spec.token_providers_message} '
+                    f'`{method} {
+                        url}` request ended up in 404 response from GitLab. A valid GitLab API token is required.\n'
+                    f'Provide a GitLab API token with `api` access via one of the: {
+                        self._spec.token_providers_message} '
                     f'Visit `https://{self.domain}/-/user_settings/personal_access_tokens` to generate a new one.')
             elif err.code == http.HTTPStatus.METHOD_NOT_ALLOWED:
                 error_response = json.loads(err.read().decode())
                 if error_response.get("message") == "Non GET methods are not allowed for moved projects":
                     raise MacheteException(
                         f"Request `{method} {url}`\n"
-                        f"ended up in `{error_response.get('message')}` response from GitLab.\n"
+                        f"ended up in `{error_response.get(
+                            'message')}` response from GitLab.\n"
                         "Please report this error as a comment under `https://github.com/VirtusLab/git-machete/issues/1212`.\n"
                         "As a workaround for now, please check `git remote -v`.\n"
                         "Most likely you use an old URL of a repository that has been moved since.\n"
@@ -221,12 +239,15 @@ class GitLabClient(CodeHostingClient):
                 raise MacheteException(f'GitLab API returned `{err.code}` '
                                        f'HTTP status with error message: `{err.reason}`.')  # pragma: no cover
             else:
-                raise UnexpectedMacheteException(f'GitLab API returned `{err.code}` HTTP status with error message: `{err.reason}`.')
+                raise UnexpectedMacheteException(f'GitLab API returned `{
+                                                 err.code}` HTTP status with error message: `{err.reason}`.')
         except OSError as e:  # pragma: no cover
             raise MacheteException(f'Could not connect to {url_prefix}: {e}')
 
     def __fire_gitlab_api_project_request(self, method: str, path_suffix: str, request_body: Optional[Dict[str, Any]] = None) -> Any:
-        project = urllib.parse.quote(f"{self.organization}/{self.repository}", safe='')  # `safe` empty, so that `/` is encoded as well
+        # `safe` empty, so that `/` is encoded as well
+        project = urllib.parse.quote(
+            f"{self.organization}/{self.repository}", safe='')
         path = f'/projects/{project}{path_suffix}'
         return self.__fire_gitlab_api_request(method=method, path=path, request_body=request_body)
 
@@ -247,40 +268,50 @@ class GitLabClient(CodeHostingClient):
             'title': ('Draft: ' if draft else '') + title,
             'description': description,
         }
-        mr = self.__fire_gitlab_api_project_request(method='POST', path_suffix='/merge_requests', request_body=request_body)
+        mr = self.__fire_gitlab_api_project_request(
+            method='POST', path_suffix='/merge_requests', request_body=request_body)
         return self.__get_merge_request_from_json(mr)
 
     def __get_user_id_by_username(self, username: str) -> Optional[int]:
-        result = self.__fire_gitlab_api_request(method='GET', path=f'/users?username={username}')
+        result = self.__fire_gitlab_api_request(
+            method='GET', path=f'/users?username={username}')
         if result:
             return int(result[0]["id"])
         else:
             return None
 
     def add_assignees_to_pull_request(self, number: int, assignees: List[str]) -> None:
-        assignee_ids: List[int] = map_truthy_only(self.__get_user_id_by_username, assignees)
+        assignee_ids: List[int] = map_truthy_only(
+            self.__get_user_id_by_username, assignees)
         request_body: Dict[str, List[int]] = {'assignee_ids': assignee_ids}
-        self.__fire_gitlab_api_project_request(method='PUT', path_suffix=f'/merge_requests/{number}', request_body=request_body)
+        self.__fire_gitlab_api_project_request(
+            method='PUT', path_suffix=f'/merge_requests/{number}', request_body=request_body)
 
     def add_reviewers_to_pull_request(self, number: int, reviewers: List[str]) -> None:
-        reviewer_ids: List[int] = map_truthy_only(self.__get_user_id_by_username, reviewers)
+        reviewer_ids: List[int] = map_truthy_only(
+            self.__get_user_id_by_username, reviewers)
         request_body: Dict[str, List[int]] = {'reviewer_ids': reviewer_ids}
-        self.__fire_gitlab_api_project_request(method='PUT', path_suffix=f'/merge_requests/{number}', request_body=request_body)
+        self.__fire_gitlab_api_project_request(
+            method='PUT', path_suffix=f'/merge_requests/{number}', request_body=request_body)
 
     def set_base_of_pull_request(self, number: int, base: LocalBranchShortName) -> None:
         request_body: Dict[str, str] = {'target_branch': base}
-        self.__fire_gitlab_api_project_request(method='PUT', path_suffix=f'/merge_requests/{number}', request_body=request_body)
+        self.__fire_gitlab_api_project_request(
+            method='PUT', path_suffix=f'/merge_requests/{number}', request_body=request_body)
 
     def set_description_of_pull_request(self, number: int, description: str) -> None:
         request_body: Dict[str, str] = {'description': description}
-        self.__fire_gitlab_api_project_request(method='PUT', path_suffix=f'/merge_requests/{number}', request_body=request_body)
+        self.__fire_gitlab_api_project_request(
+            method='PUT', path_suffix=f'/merge_requests/{number}', request_body=request_body)
 
     def set_milestone_of_pull_request(self, number: int, milestone: str) -> None:
         request_body: Dict[str, str] = {'milestone_id': milestone}
-        self.__fire_gitlab_api_project_request(method='PUT', path_suffix=f'/merge_requests/{number}', request_body=request_body)
+        self.__fire_gitlab_api_project_request(
+            method='PUT', path_suffix=f'/merge_requests/{number}', request_body=request_body)
 
     def set_draft_status_of_pull_request(self, number: int, target_draft_status: bool) -> bool:
-        mr = self.__fire_gitlab_api_project_request(method='GET', path_suffix=f'/merge_requests/{number}')
+        mr = self.__fire_gitlab_api_project_request(
+            method='GET', path_suffix=f'/merge_requests/{number}')
         is_draft = bool(mr["draft"])  # bool(...) to satisfy mypy
         if is_draft and target_draft_status is True:
             debug(f"MR !{number} is already a draft")
@@ -296,13 +327,16 @@ class GitLabClient(CodeHostingClient):
             new_title = "Draft: " + old_title
         else:
             # Prefixes as per https://docs.gitlab.com/ee/user/project/merge_requests/drafts.html in March 2024
-            new_title = re.sub(r'^(\[Draft]|Draft:|\(Draft\)) *', '', old_title)
+            new_title = re.sub(
+                r'^(\[Draft]|Draft:|\(Draft\)) *', '', old_title)
         request_body: Dict[str, str] = {'title': new_title}
-        self.__fire_gitlab_api_project_request(method='PUT', path_suffix=f'/merge_requests/{number}', request_body=request_body)
+        self.__fire_gitlab_api_project_request(
+            method='PUT', path_suffix=f'/merge_requests/{number}', request_body=request_body)
         return True
 
     def get_open_pull_requests_by_head(self, head: LocalBranchShortName) -> List[PullRequest]:
-        mrs = self.__fire_gitlab_api_project_request(method='GET', path_suffix=f'/merge_requests?state=opened&source_branch={head}')
+        mrs = self.__fire_gitlab_api_project_request(
+            method='GET', path_suffix=f'/merge_requests?state=opened&source_branch={head}')
         return [self.__get_merge_request_from_json(mr) for mr in mrs]
 
     def get_open_pull_requests(self) -> List[PullRequest]:
@@ -318,14 +352,16 @@ class GitLabClient(CodeHostingClient):
 
     def get_pull_request_by_number_or_none(self, number: int) -> Optional[PullRequest]:
         try:
-            mr_json = self.__fire_gitlab_api_project_request(method='GET', path_suffix=f'/merge_requests/{number}')
+            mr_json = self.__fire_gitlab_api_project_request(
+                method='GET', path_suffix=f'/merge_requests/{number}')
             return self.__get_merge_request_from_json(mr_json)
         except MacheteException:
             return None
 
     def fetch_org_repo_and_git_url_by_repo_id_or_none(self, repo_id: int) -> Optional[OrganizationAndRepositoryAndGitUrl]:
         try:
-            project = self.__fire_gitlab_api_request(method='GET', path=f'/projects/{repo_id}')
+            project = self.__fire_gitlab_api_request(
+                method='GET', path=f'/projects/{repo_id}')
             return OrganizationAndRepositoryAndGitUrl(
                 # `namespace`->`path` seems to be equal to `namespace`->`name` - only the last segment of the path
                 organization=project['namespace']['full_path'],

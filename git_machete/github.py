@@ -24,15 +24,16 @@ class GitHubToken(NamedTuple):
     provider: str
 
     @classmethod
-    def for_domain(cls, domain: str) -> Optional["GitHubToken"]:
+    def for_domain(cls, domain: str, token_alias: str = "") -> Optional["GitHubToken"]:
         return (cls.__get_token_from_env() or
-                cls.__get_token_from_file_in_home_directory(domain) or
+                cls.__get_token_from_file_in_home_directory(domain, token_alias) or
                 cls.__get_token_from_gh(domain) or
                 cls.__get_token_from_hub(domain))
 
     @classmethod
     def __get_token_from_env(cls) -> Optional["GitHubToken"]:
-        debug(f"1. Trying to find token in `{GITHUB_TOKEN_ENV_VAR}` environment variable...")
+        debug(f"1. Trying to find token in `{
+              GITHUB_TOKEN_ENV_VAR}` environment variable...")
         github_token = os.environ.get(GITHUB_TOKEN_ENV_VAR)
         if github_token:
             return cls(value=github_token,
@@ -40,7 +41,7 @@ class GitHubToken(NamedTuple):
         return None
 
     @classmethod
-    def __get_token_from_file_in_home_directory(cls, domain: str) -> Optional["GitHubToken"]:
+    def __get_token_from_file_in_home_directory(cls, domain: str, token_alias: str) -> Optional["GitHubToken"]:
         debug("2. Trying to find token in `~/.github-token`...")
         required_file_name = '.github-token'
         provider = f'auth token for {domain} from `~/.github-token`'
@@ -56,11 +57,24 @@ class GitHubToken(NamedTuple):
                 # ghp_yetanothertoken_for_git_example_com git.example.com
 
                 for line in file.readlines():
-                    if line.rstrip().endswith(" " + domain):
-                        token = line.split(" ")[0]
+                    line = line.rstrip()
+                    parts = (line.split(" ") + [None] * 3)[:3]
+                    token, token_domain, alias = parts
+                    if token_alias:
+                        print(f"token: {
+                            token} with alias: {alias}, specified alias {token_alias}")
+                        if alias == token_alias:
+                            print(f"found token: {
+                                token} with alias: {alias}, specified alias {token_alias}")
+                            return cls(value=token, provider=provider)
+                        else:
+                            continue
+                    if token_domain is domain:
                         return cls(value=token, provider=provider)
-                    elif domain == GitHubClient.DEFAULT_GITHUB_DOMAIN and " " not in line.rstrip():
-                        return cls(value=line.rstrip(), provider=provider)
+                    elif domain == GitHubClient.DEFAULT_GITHUB_DOMAIN:
+                        return cls(value=token, provider=provider)
+                print(f"No token found from alias {alias}")
+
         return None
 
     @classmethod
@@ -71,7 +85,8 @@ class GitHubToken(NamedTuple):
         if not gh:
             return None
 
-        gh_version_returncode, gh_version_stdout, _ = popen_cmd(gh, "--version")
+        gh_version_returncode, gh_version_stdout, _ = popen_cmd(
+            gh, "--version")
         if gh_version_returncode != 0:
             return None
 
@@ -80,23 +95,28 @@ class GitHubToken(NamedTuple):
         # gh version 2.18.0 (2022-10-18)
         # https://github.com/cli/cli/releases/tag/v2.18.0
 
-        gh_version_match = re.search(r"gh version (\d+).(\d+).(\d+) ", gh_version_stdout)
+        gh_version_match = re.search(
+            r"gh version (\d+).(\d+).(\d+) ", gh_version_stdout)
         gh_version: Optional[Tuple[int, int, int]] = None
         if gh_version_match:
-            gh_version = int(gh_version_match.group(1)), int(gh_version_match.group(2)), int(gh_version_match.group(3))
+            gh_version = int(gh_version_match.group(1)), int(
+                gh_version_match.group(2)), int(gh_version_match.group(3))
         else:
-            raise UnexpectedMacheteException(f"Could not parse output of `gh --version`: `{gh_version_stdout}`")
+            raise UnexpectedMacheteException(
+                f"Could not parse output of `gh --version`: `{gh_version_stdout}`")
 
         if gh_version and gh_version >= (2, 17, 0):
             gh_token_returncode, gh_token_stdout, _ = \
-                popen_cmd(gh, "auth", "token", "--hostname", domain, hide_debug_output=True)
+                popen_cmd(gh, "auth", "token", "--hostname",
+                          domain, hide_debug_output=True)
             if gh_token_returncode != 0:
                 return None
             if gh_token_stdout:
                 return cls(value=gh_token_stdout.strip(), provider=f'auth token for {domain} from `gh` GitHub CLI')
         else:
             gh_token_returncode, _, gh_token_stderr = \
-                popen_cmd(gh, "auth", "status", "--hostname", domain, "--show-token", hide_debug_output=True)
+                popen_cmd(gh, "auth", "status", "--hostname", domain,
+                          "--show-token", hide_debug_output=True)
             if gh_token_returncode != 0:
                 return None
 
@@ -138,7 +158,8 @@ class GitHubToken(NamedTuple):
                     if line.rstrip() == domain + ":":
                         found_host = True
                     elif found_host and line.lstrip().startswith("oauth_token:"):
-                        result = re.sub(' *oauth_token: +', '', line).rstrip().replace('"', '')
+                        result = re.sub(' *oauth_token: +', '',
+                                        line).rstrip().replace('"', '')
                         return cls(value=result,
                                    provider=f'auth token for {domain} from `hub` GitHub CLI')
         return None
@@ -178,12 +199,14 @@ class GitHubClient(CodeHostingClient):
                 remote='machete.github.remote',
                 annotate_with_urls='machete.github.annotateWithUrls',
                 force_description_from_commit_message='machete.github.forceDescriptionFromCommitMessage',
+                token_alias='machete.github.token-alias'
             )
         )
 
-    def __init__(self, spec: CodeHostingSpec, domain: str, organization: str, repository: str) -> None:
+    def __init__(self, spec: CodeHostingSpec, domain: str, organization: str, repository: str, token_alias: str) -> None:
         super().__init__(spec, domain, organization, repository)
-        self.__token: Optional[GitHubToken] = GitHubToken.for_domain(domain)
+        self.__token: Optional[GitHubToken] = GitHubToken.for_domain(
+            domain, token_alias)
 
     def __get_pull_request_from_json(self, pr_json: Dict[str, Any]) -> "PullRequest":
         return PullRequest(
@@ -214,30 +237,37 @@ class GitHubClient(CodeHostingClient):
             url_prefix = 'https://' + self.domain + '/api/v3'
 
         url = url_prefix + path
-        json_body: Optional[str] = json.dumps(request_body) if request_body else None
-        http_request = urllib.request.Request(url, headers=headers, data=json_body.encode() if json_body else None, method=method.upper())
+        json_body: Optional[str] = json.dumps(
+            request_body) if request_body else None
+        http_request = urllib.request.Request(url, headers=headers, data=json_body.encode(
+        ) if json_body else None, method=method.upper())
         debug(f'firing a {method} request to {url} with {"a" if self.__token else "no"} '
               f'bearer token and request body {compact_dict(request_body) if request_body else "<none>"}')
 
         try:
             with urllib.request.urlopen(http_request) as response:
-                parsed_response_body: Any = json.loads(response.read().decode())
+                parsed_response_body: Any = json.loads(
+                    response.read().decode())
                 # https://docs.github.com/en/rest/guides/using-pagination-in-the-rest-api?apiVersion=2022-11-28#using-link-headers
                 link_header: str = response.info()["link"]
                 if link_header:
                     url_prefix_regex = re.escape(url_prefix)
-                    match = re.search(f'<{url_prefix_regex}(/[^>]+)>; rel="next"', link_header)
+                    match = re.search(
+                        f'<{url_prefix_regex}(/[^>]+)>; rel="next"', link_header)
                     if match:
                         next_page_path = match.group(1)
-                        debug(f'link header is present in the response, and there is more data to retrieve under {next_page_path}')
+                        debug(f'link header is present in the response, and there is more data to retrieve under {
+                              next_page_path}')
                         return parsed_response_body + self.__fire_github_api_request(method, next_page_path, request_body)
                     else:
-                        debug('link header is present in the response, but there is no more data to retrieve')
+                        debug(
+                            'link header is present in the response, but there is no more data to retrieve')
                 return parsed_response_body
         except urllib.error.HTTPError as err:
             if err.code == http.HTTPStatus.UNPROCESSABLE_ENTITY:
                 error_response = json.loads(err.read().decode())
-                error_reason: str = self.__extract_failure_info_from_422(error_response)
+                error_reason: str = self.__extract_failure_info_from_422(
+                    error_response)
                 if 'A pull request already exists for' in error_reason:
                     raise MacheteException(error_reason)
                 elif 'Reviews may only be requested from collaborators.' in error_reason:
@@ -248,11 +278,14 @@ class GitHubClient(CodeHostingClient):
                     raise UnexpectedMacheteException(
                         f'GitLab API returned 422 (Unprocessable Entity) HTTP status with error message: `{error_reason}`.')
             elif err.code in (http.HTTPStatus.UNAUTHORIZED, http.HTTPStatus.FORBIDDEN):
-                first_line = f'GitHub API returned `{err.code}` HTTP status with error message: `{err.reason}`\n'
+                first_line = f'GitHub API returned `{
+                    err.code}` HTTP status with error message: `{err.reason}`\n'
                 last_line = 'You can also use a different token provider - see `git machete help github` for details.'
                 if self.__token:
                     raise MacheteException(
-                        first_line + f'Make sure that the GitHub API token provided by {self.__token.provider} '
+                        first_line +
+                        f'Make sure that the GitHub API token provided by {
+                            self.__token.provider} '
                         f'is valid and allows for access to `{method.upper()}` `{url_prefix}{path}`.\n' + last_line)
                 else:
                     raise MacheteException(
@@ -262,8 +295,10 @@ class GitHubClient(CodeHostingClient):
             elif err.code == http.HTTPStatus.NOT_FOUND:
                 # TODO (#164): make a dedicated exception here
                 raise MacheteException(
-                    f'`{method} {url}` request ended up in 404 response from GitHub. A valid GitHub API token is required.\n'
-                    f'Provide a GitHub API token with `repo` access via one of the: {self._spec.token_providers_message} '
+                    f'`{method} {
+                        url}` request ended up in 404 response from GitHub. A valid GitHub API token is required.\n'
+                    f'Provide a GitHub API token with `repo` access via one of the: {
+                        self._spec.token_providers_message} '
                     f'Visit `https://{self.domain}/settings/tokens` to generate a new one.')
             # See https://stackoverflow.com/a/62385184 for why 307 for POST/PATCH isn't automatically followed by urllib,
             # unlike 307 for GET, or 301/302 for all HTTP methods.
@@ -278,28 +313,33 @@ class GitHubClient(CodeHostingClient):
                     if not match:
                         raise UnexpectedMacheteException(
                             f"Could not extract organization and repository from Location header: `{location}`.")
-                    org_repo_and_git_url = self.get_org_repo_and_git_url_by_repo_id_or_none(int(match.group(1)))
+                    org_repo_and_git_url = self.get_org_repo_and_git_url_by_repo_id_or_none(
+                        int(match.group(1)))
                     if not org_repo_and_git_url:
                         raise UnexpectedMacheteException(
                             f"Could not find organization and repository referenced from Location header: `{location}`.")
                     new_org, new_repo, _ = org_repo_and_git_url
                 else:
                     raise UnexpectedMacheteException(
-                        f'GitHub API returned `{err.code}` HTTP status with error message: `{err.reason}`.\n'
+                        f'GitHub API returned `{
+                            err.code}` HTTP status with error message: `{err.reason}`.\n'
                         'It looks like the organization or repository name got changed recently and is outdated.\n'
                         'Update your remote repository manually via: `git remote set-url <remote_name> <new_repository_url>`.')
                 new_path = re.sub("https://[^/]+", "", location)
-                result = self.__fire_github_api_request(method=method, path=new_path, request_body=request_body)
+                result = self.__fire_github_api_request(
+                    method=method, path=new_path, request_body=request_body)
                 warn(f'GitHub API returned `{err.code}` HTTP status with error message: `{err.reason}`.\n'
                      'It looks like the organization or repository name got changed recently and is outdated.\n'
-                     f'New organization is {bold(new_org)} and new repository is {bold(new_repo)}.\n'
-                     'You can update your remote repository via: `git remote set-url <remote_name> <new_repository_url>`.')
+                     f'New organization is {bold(new_org)} and new repository is {
+                    bold(new_repo)}.\n'
+                    'You can update your remote repository via: `git remote set-url <remote_name> <new_repository_url>`.')
                 return result
             elif err.code >= 500:
                 raise MacheteException(f'GitHub API returned `{err.code}` '
                                        f'HTTP status with error message: `{err.reason}`.')  # pragma: no cover
             else:
-                raise UnexpectedMacheteException(f'GitHub API returned `{err.code}` HTTP status with error message: `{err.reason}`.')
+                raise UnexpectedMacheteException(f'GitHub API returned `{
+                                                 err.code}` HTTP status with error message: `{err.reason}`.')
         except OSError as e:  # pragma: no cover
             raise MacheteException(f'Could not connect to {url_prefix}: {e}')
 
@@ -334,7 +374,8 @@ class GitHubClient(CodeHostingClient):
             'body': description,
             'draft': draft
         }
-        pr = self.__fire_github_api_repo_request(method='POST', path_suffix='/pulls', request_body=request_body)
+        pr = self.__fire_github_api_repo_request(
+            method='POST', path_suffix='/pulls', request_body=request_body)
         return self.__get_pull_request_from_json(pr)
 
     def add_assignees_to_pull_request(self, number: int, assignees: List[str]) -> None:
@@ -342,26 +383,31 @@ class GitHubClient(CodeHostingClient):
             'assignees': assignees
         }
         # Adding assignees is only available via the Issues API, not PRs API.
-        self.__fire_github_api_repo_request(method='POST', path_suffix=f'/issues/{number}/assignees', request_body=request_body)
+        self.__fire_github_api_repo_request(
+            method='POST', path_suffix=f'/issues/{number}/assignees', request_body=request_body)
 
     def add_reviewers_to_pull_request(self, number: int, reviewers: List[str]) -> None:
         request_body: Dict[str, List[str]] = {
             'reviewers': reviewers
         }
-        self.__fire_github_api_repo_request(method='POST', path_suffix=f'/pulls/{number}/requested_reviewers', request_body=request_body)
+        self.__fire_github_api_repo_request(
+            method='POST', path_suffix=f'/pulls/{number}/requested_reviewers', request_body=request_body)
 
     def set_base_of_pull_request(self, number: int, base: LocalBranchShortName) -> None:
         request_body: Dict[str, str] = {'base': base}
-        self.__fire_github_api_repo_request(method='PATCH', path_suffix=f'/pulls/{number}', request_body=request_body)
+        self.__fire_github_api_repo_request(
+            method='PATCH', path_suffix=f'/pulls/{number}', request_body=request_body)
 
     def set_description_of_pull_request(self, number: int, description: str) -> None:
         request_body: Dict[str, str] = {'body': description}
-        self.__fire_github_api_repo_request(method='PATCH', path_suffix=f'/pulls/{number}', request_body=request_body)
+        self.__fire_github_api_repo_request(
+            method='PATCH', path_suffix=f'/pulls/{number}', request_body=request_body)
 
     def set_milestone_of_pull_request(self, number: int, milestone: str) -> None:
         request_body: Dict[str, str] = {'milestone': milestone}
         # Setting milestone is only available via the Issues API, not PRs API.
-        self.__fire_github_api_repo_request(method='PATCH', path_suffix=f'/issues/{number}', request_body=request_body)
+        self.__fire_github_api_repo_request(
+            method='PATCH', path_suffix=f'/issues/{number}', request_body=request_body)
 
     # As of September 2023, REST (v3) GitHub API does **not** allow for setting PR draft status,
     # only for creating a draft PR or retrieving draft status on an existing PR.
@@ -410,11 +456,13 @@ class GitHubClient(CodeHostingClient):
         return True
 
     def get_open_pull_requests_by_head(self, head: LocalBranchShortName) -> List[PullRequest]:
-        prs = self.__fire_github_api_repo_request(method='GET', path_suffix=f'/pulls?head={self.organization}:{head}')
+        prs = self.__fire_github_api_repo_request(
+            method='GET', path_suffix=f'/pulls?head={self.organization}:{head}')
         return [self.__get_pull_request_from_json(pr) for pr in prs]
 
     def get_open_pull_requests(self) -> List[PullRequest]:
-        prs = self.__fire_github_api_repo_request(method='GET', path_suffix=f'/pulls?per_page={self.MAX_PULLS_PER_PAGE_COUNT}')
+        prs = self.__fire_github_api_repo_request(
+            method='GET', path_suffix=f'/pulls?per_page={self.MAX_PULLS_PER_PAGE_COUNT}')
         return [self.__get_pull_request_from_json(pr) for pr in prs]
 
     def get_current_user_login(self) -> Optional[str]:
@@ -425,14 +473,16 @@ class GitHubClient(CodeHostingClient):
 
     def get_pull_request_by_number_or_none(self, number: int) -> Optional[PullRequest]:
         try:
-            pr_json: Dict[str, Any] = self.__fire_github_api_repo_request(method='GET', path_suffix=f'/pulls/{number}')
+            pr_json: Dict[str, Any] = self.__fire_github_api_repo_request(
+                method='GET', path_suffix=f'/pulls/{number}')
             return self.__get_pull_request_from_json(pr_json)
         except MacheteException:
             return None
 
     def fetch_org_repo_and_git_url_by_repo_id_or_none(self, repo_id: int) -> Optional[OrganizationAndRepositoryAndGitUrl]:
         try:
-            repo = self.__fire_github_api_request(method='GET', path=f'/repositories/{repo_id}')
+            repo = self.__fire_github_api_request(
+                method='GET', path=f'/repositories/{repo_id}')
             return OrganizationAndRepositoryAndGitUrl(
                 organization=repo['owner']['login'],
                 repository=repo['name'],
