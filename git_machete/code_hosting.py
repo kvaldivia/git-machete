@@ -32,16 +32,17 @@ class PullRequest(NamedTuple):
 class OrganizationAndRepository(NamedTuple):
     organization: str
     repository: str
+    token_alias: str
 
     @classmethod
-    def from_url(cls, domain: str, url: str) -> Optional["OrganizationAndRepository"]:
+    def from_url(cls, domain: str, url: str, token_alias: str) -> Optional["OrganizationAndRepository"]:
         url = url if url.endswith('.git') else url + '.git'
         for pattern in remote_url_patterns(domain):
             match = re.match(pattern, url)
             if match:
                 org = match.group(1)
                 repo = match.group(2)
-                return cls(organization=org, repository=repo if repo[-4:] != '.git' else repo[:-4])
+                return cls(organization=org, repository=repo if repo[-4:] != '.git' else repo[:-4], token_alias=token_alias)
         return None
 
 
@@ -49,12 +50,14 @@ class OrganizationAndRepositoryAndRemote(NamedTuple):
     organization: str
     repository: str
     remote: str
+    token_alias: str
 
 
 class OrganizationAndRepositoryAndGitUrl(NamedTuple):
     organization: str
     repository: str
     git_url: str
+    token_alias: str
 
 
 def remote_url_patterns(domain: str) -> List[str]:
@@ -82,6 +85,7 @@ class CodeHostingGitConfigKeys(NamedTuple):
     remote: str
     annotate_with_urls: str
     force_description_from_commit_message: str
+    token_alias: str
 
     def for_locating_repo_message(self) -> str:
         return f"`{self.domain}`, `{self.organization}`, `{self.repository}`, `{self.remote}`"
@@ -106,8 +110,9 @@ class CodeHostingSpec(NamedTuple):
     def __str__(self) -> str:
         return f"CodeHostingSpec({self.display_name})"
 
-    def create_client(self, domain: str, organization: str, repository: str) -> "CodeHostingClient":
-        return self.client_class(self, domain=domain, organization=organization, repository=repository)  # type: ignore[no-any-return]
+    def create_client(self, domain: str, organization: str, repository: str, token_alias: str) -> "CodeHostingClient":
+        # type: ignore[no-any-return]
+        return self.client_class(self, domain=domain, organization=organization, repository=repository, token_alias=token_alias)
 
 
 # flake8: noqa
@@ -118,7 +123,8 @@ class CodeHostingClient(metaclass=ABCMeta):  # pragma: no cover
         self.domain: str = domain
         self.organization: str = organization
         self.repository: str = repository
-        self.__org_repo_and_git_url_by_repo_id: Dict[int, Optional[OrganizationAndRepositoryAndGitUrl]] = {}
+        self.__org_repo_and_git_url_by_repo_id: Dict[int,
+                                                     Optional[OrganizationAndRepositoryAndGitUrl]] = {}
 
     @abstractmethod
     def create_pull_request(self, head: str, base: str, title: str, description: str, draft: bool) -> PullRequest:
@@ -171,7 +177,8 @@ class CodeHostingClient(metaclass=ABCMeta):  # pragma: no cover
 
     def get_org_repo_and_git_url_by_repo_id_or_none(self, repo_id: int) -> Optional[OrganizationAndRepositoryAndGitUrl]:
         if repo_id not in self.__org_repo_and_git_url_by_repo_id:
-            self.__org_repo_and_git_url_by_repo_id[repo_id] = self.fetch_org_repo_and_git_url_by_repo_id_or_none(repo_id)
+            self.__org_repo_and_git_url_by_repo_id[repo_id] = self.fetch_org_repo_and_git_url_by_repo_id_or_none(
+                repo_id)
         return self.__org_repo_and_git_url_by_repo_id[repo_id]
 
     @abstractmethod
